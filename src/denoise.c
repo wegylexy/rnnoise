@@ -280,7 +280,7 @@ static void apply_window(float *x) {
   }
 }
 
-int rnnoise_get_size() {
+size_t rnnoise_get_size() {
   return sizeof(DenoiseState);
 }
 
@@ -411,25 +411,25 @@ static int compute_frame_features(DenoiseState *st, kiss_fft_cpx *X, kiss_fft_cp
   return TRAINING && E < 0.1;
 }
 
-static void frame_synthesis(DenoiseState *st, float *out, const kiss_fft_cpx *y) {
+static void frame_synthesis(DenoiseState *st, short *out, const kiss_fft_cpx *y) {
   float x[WINDOW_SIZE];
   int i;
   inverse_transform(x, y);
   apply_window(x);
-  for (i=0;i<FRAME_SIZE;i++) out[i] = x[i] + st->synthesis_mem[i];
+  for (i=0;i<FRAME_SIZE;i++) out[i] = (short)(x[i] + st->synthesis_mem[i]);
   RNN_COPY(st->synthesis_mem, &x[FRAME_SIZE], FRAME_SIZE);
 }
 
-static void biquad(float *y, float mem[2], const float *x, const float *b, const float *a, int N) {
-  int i;
-  for (i=0;i<N;i++) {
-    float xi, yi;
-    xi = x[i];
-    yi = x[i] + mem[0];
-    mem[0] = mem[1] + (b[0]*(double)xi - a[0]*(double)yi);
-    mem[1] = (b[1]*(double)xi - a[1]*(double)yi);
-    y[i] = yi;
-  }
+static void biquad(float *y, float mem[2], const short *x, const float *b, const float *a, int N) {
+    int i;
+    for (i = 0; i < N; i++) {
+        float xi, yi;
+        xi = x[i];
+        yi = x[i] + mem[0];
+        mem[0] = mem[1] + (b[0] * xi - a[0] * yi);
+        mem[1] = (b[1] * xi - a[1] * yi);
+        y[i] = yi;
+    }
 }
 
 void pitch_filter(kiss_fft_cpx *X, const kiss_fft_cpx *P, const float *Ex, const float *Ep,
@@ -468,7 +468,7 @@ void pitch_filter(kiss_fft_cpx *X, const kiss_fft_cpx *P, const float *Ex, const
   }
 }
 
-float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
+float rnnoise_process_frame(DenoiseState *st, short *out, const short *in) {
   int i;
   kiss_fft_cpx X[FREQ_SIZE];
   kiss_fft_cpx P[WINDOW_SIZE];

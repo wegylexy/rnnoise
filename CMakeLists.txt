@@ -24,3 +24,4 @@ set(RN_NOISE_SRC
 
 include_directories(include)
 add_executable(rnnoise_demo ${RN_NOISE_SRC})
+target_link_libraries(rnnoise_demo -lm )

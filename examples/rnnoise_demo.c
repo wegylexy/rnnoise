@@ -124,43 +124,23 @@ void resampleData(const int16_t *sourceData, int32_t sampleRate, uint32_t srcSiz
     }
 }
 
-void f32_to_s16(int16_t *pOut, const float *pIn, size_t sampleCount) {
-    if (pOut == NULL || pIn == NULL) {
-        return;
-    }
-    for (size_t i = 0; i < sampleCount; ++i) {
-        *pOut++ = (short) pIn[i];
-    }
-}
-
-void s16_to_f32(float *pOut, const int16_t *pIn, size_t sampleCount) {
-    if (pOut == NULL || pIn == NULL) {
-        return;
-    }
-    for (size_t i = 0; i < sampleCount; ++i) {
-        *pOut++ = pIn[i];
-    }
-}
-
 void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
     const int frame_size = 480;
     DenoiseState *st;
     st = rnnoise_create();
-    float patch_buffer[frame_size];
+    int16_t patch_buffer[frame_size];
     if (st != NULL) {
         uint32_t frames = buffen_len / frame_size;
         uint32_t lastFrame = buffen_len % frame_size;
         for (int i = 0; i < frames; ++i) {
-            s16_to_f32(patch_buffer, buffer, frame_size);
-            rnnoise_process_frame(st, patch_buffer, patch_buffer);
-            f32_to_s16(buffer, patch_buffer, frame_size);
+            rnnoise_process_frame(st, buffer, buffer);
             buffer += frame_size;
         }
         if (lastFrame != 0) {
-            memset(patch_buffer, 0, frame_size * sizeof(float));
-            s16_to_f32(patch_buffer, buffer, lastFrame);
+            memset(patch_buffer, 0, frame_size * sizeof(int16_t));
+            memcpy(patch_buffer, buffer, lastFrame * sizeof(int16_t));
             rnnoise_process_frame(st, patch_buffer, patch_buffer);
-            f32_to_s16(buffer, patch_buffer, lastFrame);
+            memcpy(buffer, patch_buffer, lastFrame * sizeof(int16_t));
         }
     }
     rnnoise_destroy(st);
