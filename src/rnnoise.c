@@ -1,3 +1,5 @@
+typedef __int16 int16_t;
+#define _USE_MATH_DEFINES
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1405,7 +1407,7 @@ void celt_fir(
         int N,
         int ord) {
     int i, j;
-    opus_val16 rnum[ord];
+    opus_val16 *rnum = malloc(sizeof(opus_val16) * ord);
     for (i = 0; i < ord; i++)
         rnum[i] = num[ord - i - 1];
     for (i = 0; i < N - 3; i += 4) {
@@ -1426,6 +1428,7 @@ void celt_fir(
             sum = MAC16_16(sum, rnum[j], x[i + j - ord]);
         y[i] = ROUND16(sum, SIG_SHIFT);
     }
+	free(rnum);
 }
 
 void celt_iir(const opus_val32 *_x,
@@ -1453,8 +1456,8 @@ void celt_iir(const opus_val32 *_x,
 #else
     int i, j;
     celt_assert((ord & 3) == 0);
-    opus_val16 rden[ord];
-    opus_val16 y[N + ord];
+    opus_val16 *rden = malloc(sizeof(opus_val16) * ord);
+    opus_val16 *y = malloc(sizeof(opus_val16) * (N + ord));
     for (i = 0; i < ord; i++)
         rden[i] = den[ord - i - 1];
     for (i = 0; i < ord; i++)
@@ -1496,6 +1499,8 @@ void celt_iir(const opus_val32 *_x,
     }
     for (i = 0; i < ord; i++)
         mem[i] = _y[N - i - 1];
+	free(y);
+	free(rden);
 #endif
 }
 
@@ -1511,7 +1516,7 @@ int _celt_autocorr(
     int fastN = n - lag;
     int shift;
     const opus_val16 *xptr;
-    opus_val16 xx[n];
+    opus_val16 *xx = malloc(sizeof(opus_val16) * n);
     celt_assert(n > 0);
     celt_assert(overlap >= 0);
     if (overlap == 0) {
@@ -1525,6 +1530,7 @@ int _celt_autocorr(
         }
         xptr = xx;
     }
+	free(xx);
     shift = 0;
 #ifdef FIXED_POINT
                                                                                                                             {
@@ -2535,9 +2541,9 @@ void pitch_search(const opus_val16 *x_lp, opus_val16 *y,
     celt_assert(max_pitch > 0);
     lag = len + max_pitch;
 
-    opus_val16 x_lp4[len >> 2];
-    opus_val16 y_lp4[lag >> 2];
-    opus_val32 xcorr[max_pitch >> 1];
+    opus_val16 *x_lp4 = malloc(sizeof(opus_val16) * (len >> 2));
+    opus_val16 *y_lp4 = malloc(sizeof(opus_val16) * (lag >> 2));
+    opus_val32 *xcorr = malloc(sizeof(opus_val32) * (max_pitch >> 1));
 
     /* Downsample by 2 again */
     for (j = 0; j < len >> 2; j++)
@@ -2568,12 +2574,14 @@ void pitch_search(const opus_val16 *x_lp, opus_val16 *y,
     maxcorr =
 #endif
     celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len >> 2, max_pitch >> 2);
+	free(x_lp4);
 
     find_best_pitch(xcorr, y_lp4, len >> 2, max_pitch >> 2, best_pitch
 #ifdef FIXED_POINT
             , 0, maxcorr
 #endif
     );
+	free(y_lp4);
 
     /* Finer search with 2x decimation */
 #ifdef FIXED_POINT
@@ -2617,6 +2625,7 @@ void pitch_search(const opus_val16 *x_lp, opus_val16 *y,
     } else {
         offset = 0;
     }
+	free(xcorr);
     *pitch = 2 * best_pitch[0] - offset;
 }
 
@@ -2680,7 +2689,7 @@ opus_val16 remove_doubling(opus_val16 *x, int maxperiod, int minperiod,
         *T0_ = maxperiod - 1;
 
     T = T0 = *T0_;
-    opus_val32 yy_lookup[maxperiod + 1];
+    opus_val32 *yy_lookup = malloc(sizeof(opus_val32) * (maxperiod + 1));
     dual_inner_prod(x, x, x - T0, N, &xx, &xy);
     yy_lookup[0] = xx;
     yy = xx;
@@ -2734,6 +2743,7 @@ opus_val16 remove_doubling(opus_val16 *x, int maxperiod, int minperiod,
             g = g1;
         }
     }
+	free(yy_lookup);
     best_xy = MAX32(0, best_xy);
     if (best_yy <= best_xy)
         pg = Q15ONE;

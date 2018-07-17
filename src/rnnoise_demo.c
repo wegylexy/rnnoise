@@ -128,11 +128,11 @@ void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
     const int frame_size = 480;
     DenoiseState *st;
     st = rnnoise_create();
-    int16_t patch_buffer[frame_size];
+    int16_t *patch_buffer = malloc(sizeof(int16_t) * frame_size);
     if (st != NULL) {
         uint32_t frames = buffen_len / frame_size;
         uint32_t lastFrame = buffen_len % frame_size;
-        for (int i = 0; i < frames; ++i) {
+        for (uint32_t i = 0; i < frames; ++i) {
             rnnoise_process_frame(st, buffer, buffer);
             buffer += frame_size;
         }
@@ -143,6 +143,7 @@ void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
             memcpy(buffer, patch_buffer, lastFrame * sizeof(int16_t));
         }
     }
+	free(patch_buffer);
     rnnoise_destroy(st);
 }
 
@@ -181,7 +182,7 @@ int main(int argc, char **argv) {
     char ext[256];
     char out_file[1024];
     splitpath(in_file, drive, dir, fname, ext);
-    sprintf(out_file, "%s%s%s_out%s", drive, dir, fname, ext);
+    sprintf_s(out_file, 1024, "%s%s%s_out%s", drive, dir, fname, ext);
     rnnDeNoise(in_file, out_file);
     printf("press any key to exit.\n");
     getchar();

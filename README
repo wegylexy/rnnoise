@@ -1,7 +1,7 @@
 RNNoise is a noise suppression library based on a recurrent neural network
  - ref: https://github.com/xiph/rnnoise
 
-To compile, just use CMake.
+To compile, just use Visual C++.
 
 While it is meant to be used as a library, a simple command-line tool is
 provided as an example. It operates on wav mono files. It can be used as:
