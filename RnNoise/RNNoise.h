@@ -10,6 +10,6 @@ public:
 	RNNoise();
 	~RNNoise();
 
-	float transform(const short in[480], short out[480]);
+	float transform(short out[480], const short in[480]);
 };
 

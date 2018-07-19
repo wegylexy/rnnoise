@@ -1026,7 +1026,7 @@ RNNoise::RNNoise() : st{ make_unique<State>() } { }
 
 RNNoise::~RNNoise() { }
 
-float RNNoise::transform(const short in[480], short out[480])
+float RNNoise::transform(short out[480], const short in[480])
 {
 	kiss_fft_cpx X[FREQ_SIZE], P[WINDOW_SIZE];
 	float x[FRAME_SIZE],
