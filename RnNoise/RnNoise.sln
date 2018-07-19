@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RnNoise", "RnNoise.vcxproj"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RnNoiseClr", "..\RnNoiseClr\RnNoiseClr.vcxproj", "{3AA57894-5486-4C57-A0EE-385443328018}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RnNoiseClr.Demo", "..\RnNoiseClr.Demo\RnNoiseClr.Demo.csproj", "{641250AB-ED19-4E88-AB34-2EB25AFFBE17}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -31,6 +33,14 @@ Global
 		{3AA57894-5486-4C57-A0EE-385443328018}.Release|x64.Build.0 = Release|x64
 		{3AA57894-5486-4C57-A0EE-385443328018}.Release|x86.ActiveCfg = Release|Win32
 		{3AA57894-5486-4C57-A0EE-385443328018}.Release|x86.Build.0 = Release|Win32
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Debug|x64.ActiveCfg = Debug|x64
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Debug|x64.Build.0 = Debug|x64
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Debug|x86.ActiveCfg = Debug|x86
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Debug|x86.Build.0 = Debug|x86
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Release|x64.ActiveCfg = Release|x64
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Release|x64.Build.0 = Release|x64
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Release|x86.ActiveCfg = Release|x86
+		{641250AB-ED19-4E88-AB34-2EB25AFFBE17}.Release|x86.Build.0 = Release|x86
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

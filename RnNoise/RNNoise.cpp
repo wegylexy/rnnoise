@@ -156,9 +156,11 @@ struct kiss_fft_state {
 	unique_ptr<int16_t[]> bitrev;
 	unique_ptr<kiss_twiddle_cpx[]> twiddles;
 
-	kiss_fft_state(const int nfft) : nfft{ nfft },
+	kiss_fft_state(const int nfft) :
+		nfft{ nfft },
 		scale{ 1.f / nfft },
 		shift{ -1 },
+		factors{},
 		bitrev{ make_unique<int16_t[]>(nfft) },
 		twiddles{ make_unique<kiss_twiddle_cpx[]>(nfft) }
 	{
@@ -173,14 +175,16 @@ static struct CommonState {
 	float half_window[FRAME_SIZE], dct_table[NB_BANDS * NB_BANDS];
 
 	CommonState() : kfft{ make_unique<const kiss_fft_state>(WINDOW_SIZE) } {
-		static const float __2{ static_cast<float>(sqrt(.5)) }, M_PI_F{ static_cast<float>(M_PI) };
+		static const float __2{ sqrt(.5f) }, M_PI_F{ static_cast<float>(M_PI) };
 		int i;
 		for (i = 0; i < FRAME_SIZE; ++i)
 			half_window[i] = static_cast<float>(sin(M_PI_2 * pow(sin(M_PI_2 * (i + .5) / FRAME_SIZE), 2)));
 		for (i = 0; i < NB_BANDS; ++i) {
-			dct_table[i * NB_BANDS] = __2;
-			for (int j = 1; j < NB_BANDS; ++j)
+			for (int j = 0; j < NB_BANDS; ++j) {
 				dct_table[i * NB_BANDS + j] = cos((i + .5f) * j * M_PI_F / NB_BANDS);
+				if (!j)
+					dct_table[i * NB_BANDS] *= __2;
+			}
 		}
 	}
 } common{};
@@ -218,7 +222,8 @@ inline static void kf_bfly2(kiss_fft_cpx *Fout, int m, int N) {
 			*Fout += t;
 			++Fout;
 			++Fout2;
-			t = conj(*Fout2);
+			t.real(Fout2->imag());
+			t.imag(-Fout2->real());
 			*Fout2 = *Fout - t;
 			*Fout += t;
 			++Fout;
@@ -343,10 +348,11 @@ inline static void kf_bfly5(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 #endif
 #endif
 
-inline static void opus_fft_impl(const kiss_fft_state *st, kiss_fft_cpx fout[WINDOW_SIZE]) {
+inline static void opus_fft_impl(const kiss_fft_state st[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
 	int m2, m, p, L{},
-		fstride[MAXFACTORS]{ 1 },
+		fstride[MAXFACTORS],
 		shift{ st->shift > 0 ? st->shift : 0 };
+	fstride[0] = 1;
 	do {
 		p = st->factors[2 * L];
 		m = st->factors[2 * L + 1];
@@ -376,7 +382,7 @@ inline static void opus_fft_impl(const kiss_fft_state *st, kiss_fft_cpx fout[WIN
 	}
 }
 
-inline static void opus_fft_c(const kiss_fft_state *st, const kiss_fft_cpx fin[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
+inline static void opus_fft_c(const kiss_fft_state st[WINDOW_SIZE], const kiss_fft_cpx fin[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
 	float scale{ st->scale };
 	for (int i{}; i < st->nfft; ++i)
 		fout[st->bitrev[i]] = scale * fin[i];
@@ -404,7 +410,7 @@ static void apply_window(float x[WINDOW_SIZE]) {
 }
 
 static void compute_band_energy(float bandE[NB_BANDS], const kiss_fft_cpx X[FREQ_SIZE]) {
-	fill(bandE, bandE + NB_BANDS, 0.f);
+	memset(bandE, 0, sizeof(float) * NB_BANDS);
 	int i;
 	for (i = 0; i < NB_BANDS - 1; ++i) {
 		const auto band_size = (eband5ms[i + 1] - eband5ms[i]) << FRAME_SIZE_SHIFT;
@@ -493,10 +499,9 @@ inline static float celt_inner_prod(const float *x, const float *y, int N) {
 
 inline static void celt_pitch_xcorr(const float *_x, const float *_y, float *xcorr, int len, int max_pitch) {
 	int i, max_pitch_3{ max_pitch - 3 };
-	for (i = 0; i < max_pitch_3; i += 4) {
-		fill(xcorr, xcorr + 4, 0.f);
-		xcorr_kernel(_x, _y + i, xcorr, len);
-	}
+	memset(xcorr, 0, sizeof(float) * max_pitch);
+	for (i = 0; i < max_pitch_3; i += 4)
+		xcorr_kernel(_x, _y + i, xcorr + i, len);
 	for (; i < max_pitch; ++i)
 		xcorr[i] = celt_inner_prod(_x, _y + i, len);
 }
@@ -528,7 +533,7 @@ inline static void _celt_autocorr(const float *x, float *ac, const float *window
 }
 
 inline static void _celt_lpc(float *_lpc, const float *ac, int p) {
-	fill(_lpc, _lpc + p, 0.f);
+	memset(_lpc, 0, sizeof(float) * p);
 	float error{ ac[0] };
 	if (ac[0]) {
 		for (int i{}; i < p; ++i) {
@@ -736,7 +741,7 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 }
 
 inline static void compute_band_corr(float bandE[NB_BANDS], const kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[FREQ_SIZE]) {
-	fill(bandE, bandE + NB_BANDS, 0.f);
+	memset(bandE, 0, sizeof(float) * NB_BANDS);
 	for (int i{}; i < NB_BANDS; ++i) {
 		const auto band_size = (eband5ms[i + 1] - eband5ms[i]) << FRAME_SIZE_SHIFT;
 		for (int j{}; j < band_size; ++j) {
@@ -798,7 +803,7 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 		E += Ex[i];
 	}
 	if (E < .04f) {
-		fill(features, features + NB_FEATURES, 0.f);
+		memset(features, 0, sizeof(float) * NB_FEATURES);
 		return true;
 	}
 	dct(features, Ly);
@@ -808,7 +813,7 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 		*ceps_1{ st->memid < 1 ? st->cepstral_mem[CEPS_MEM + st->memid - 1] : st->cepstral_mem[st->memid - 1] },
 		*ceps_2{ st->memid < 2 ? st->cepstral_mem[CEPS_MEM + st->memid - 2] : st->cepstral_mem[st->memid - 2] },
 		spec_variability{};
-	memcpy(ceps_0, features, sizeof(float)*NB_BANDS);
+	memcpy(ceps_0, features, sizeof(float) * NB_BANDS);
 	st->memid = (st->memid + 1) % CEPS_MEM;
 	for (i = 0; i < NB_DELTA_CEPS; ++i) {
 		features[i] = ceps_0[i] + ceps_1[i] + ceps_2[i];
@@ -827,7 +832,7 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 		spec_variability += mindist;
 	}
 	features[NB_BANDS + 3 * NB_DELTA_CEPS + 1] = spec_variability / CEPS_MEM - 2.1f;
-	return E < .1f;
+	return false;
 }
 
 #define INPUT_SIZE 42
@@ -970,19 +975,21 @@ inline static void compute_rnn(RNNState &rnn, float *gains, float &vad, const fl
 }
 
 static void interp_band_gain(float g[FREQ_SIZE], const float bandE[NB_BANDS]) {
-	fill(g, g + FRAME_SIZE, 0.f);
+	int k;
 	for (int i{}; i < NB_BANDS - 1; ++i) {
 		const auto band_size = (eband5ms[i + 1] - eband5ms[i]) << FRAME_SIZE_SHIFT;
 		for (int j{}; j < band_size; ++j) {
 			float frac{ static_cast<float>(j) / band_size };
-			g[(eband5ms[i] << FRAME_SIZE_SHIFT) + j] = (1 - frac) * bandE[i] + frac * bandE[i + 1];
+			g[k = (eband5ms[i] << FRAME_SIZE_SHIFT) + j] = (1 - frac) * bandE[i] + frac * bandE[i + 1];
 		}
 	}
+	++k;
+	memset(g + k, 0, sizeof(float) * (FREQ_SIZE - k));
 }
 
 inline static void pitch_filter(kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[WINDOW_SIZE],
 	const float Ex[NB_BANDS], const float Ep[NB_BANDS], const float Exp[NB_BANDS], const float g[NB_BANDS]) {
-	float r[NB_BANDS], rf[FREQ_SIZE]{ 0 }, newE[NB_BANDS], norm[NB_BANDS], normf[FREQ_SIZE]{ 0 };
+	float r[NB_BANDS], rf[FREQ_SIZE], newE[NB_BANDS], norm[NB_BANDS], normf[FREQ_SIZE]{};
 	int i;
 	for (i = 0; i < NB_BANDS; ++i) {
 		const auto _Exp = Exp[i], _g = g[i];
