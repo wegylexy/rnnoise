@@ -24,6 +24,9 @@
     <ClInclude Include="..\RnNoise\RNNoise.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\RnNoise\rnn_weight.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="RnNoiseClr.cpp">

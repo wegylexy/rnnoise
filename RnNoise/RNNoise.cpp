@@ -283,11 +283,11 @@ inline static void kf_bfly4(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 
 #ifndef RADIS_TWO_ONLY
 inline static void kf_bfly3(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state *st, int m, int N, int mm) {
-	const auto m2 = 2 * m;
+	const size_t m2{ 2 * static_cast<size_t>(m) };
 	const auto twiddles = st->twiddles.get();
-	const kiss_twiddle_cpx *tw1, *tw2;
 	kiss_fft_cpx scratch[5];
-	kiss_fft_cpx *Fout_beg{ Fout }, epi3{ twiddles[fstride * m] };
+	kiss_fft_cpx *Fout_beg{ Fout };
+	const kiss_twiddle_cpx *tw1, *tw2, epi3{ twiddles[fstride * m] };
 	for (int i{}; i < N; ++i) {
 		Fout = Fout_beg + i * mm;
 		tw2 = tw1 = twiddles;
@@ -299,8 +299,8 @@ inline static void kf_bfly3(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 			scratch[0] = scratch[1] - scratch[2];
 			tw1 += fstride;
 			tw2 += fstride * 2;
-			Fout[m].real(Fout->real() - scratch[3].real()*.5f);
-			Fout[m].imag(Fout->imag() - scratch[3].imag()*.5f);
+			Fout[m].real(Fout->real() - scratch[3].real() * .5f);
+			Fout[m].imag(Fout->imag() - scratch[3].imag() * .5f);
 			scratch[0] *= epi3.imag();
 			*Fout += scratch[3];
 			Fout[m2].real(Fout[m].real() + scratch[0].imag());
@@ -547,7 +547,7 @@ inline static void _celt_lpc(float *_lpc, const float *ac, int p) {
 				_lpc[j] += r * tmp2;
 				_lpc[i - 1 - j] += r * tmp1;
 			}
-			if ((error -= r * r*error) < .001f*ac[0])
+			if ((error -= r * r * error) < .001f * ac[0])
 				break;
 		}
 	}
@@ -576,17 +576,17 @@ inline static void pitch_downsample(float *const x[], float *x_lp, int len, int 
 	int i, len_2{ len >> 1 };
 	x_lp[0] = (x[0][1] * .5f + x[0][0])*.5f;
 	for (i = 1; i < len_2; ++i)
-		x_lp[i] = ((x[0][(2 * i - 1)] + x[0][(2 * i + 1)])*.5f + x[0][2 * i])*.5f;
+		x_lp[i] = ((x[0][(2 * i - 1)] + x[0][(2 * i + 1)]) * .5f + x[0][2 * i]) * .5f;
 	if (C == 2) {
-		x_lp[0] = (x[1][1] * .5f + x[1][0])*.5f;
+		x_lp[0] += (x[1][1] * .5f + x[1][0]) * .5f;
 		for (i = 1; i < len_2; ++i)
-			x_lp[i] = ((x[1][(2 * i - 1)] + x[1][(2 * i + 1)])*.5f + x[1][2 * i])*.5f;
+			x_lp[i] = ((x[1][(2 * i - 1)] + x[1][(2 * i + 1)]) * .5f + x[1][2 * i]) * .5f;
 	}
 	float ac[5], lpc[4];
 	_celt_autocorr(x_lp, ac, nullptr, 0, 4, len_2);
 	ac[0] *= 1.0001f;
 	for (i = 1; i < 5; ++i)
-		ac[i] -= ac[i] * 6.4e-5f * i * i;
+		ac[i] -= i * i * 6.4e-5f * ac[i];
 	_celt_lpc(lpc, ac, 4);
 	float tmp{ 1 }, lpc2[5];
 	for (i = 0; i < 4; ++i)
@@ -630,37 +630,40 @@ inline static void find_best_pitch(float *xcorr, float *y, int len, int max_pitc
 	}
 }
 
-inline static void pitch_search(const float *x_lp, float *y, int len, int max_pitch, int *pitch) {
+inline static void pitch_search(const float *x_lp, float *y, int len, int max_pitch, int &pitch) {
 	int lag{ len + max_pitch },
 		len_4{ len >> 2 }, lag_4{ lag >> 2 }, max_pitch_2{ max_pitch >> 1 }, max_pitch_4{ max_pitch >> 2 }, len_2{ len >> 1 },
 		j, best_pitch[2]{}, offset;
 	{
 		auto xcorr = make_unique<float[]>(max_pitch_2);
+		const auto _xcorr = xcorr.get();
 		{
 			auto y_lp4 = make_unique<float[]>(lag_4);
+			const auto _y_lp4 = y_lp4.get();
 			{
 				auto x_lp4 = make_unique<float[]>(len_4);
 				for (j = 0; j < len_4; ++j)
 					x_lp4[j] = x_lp[2 * j];
 				for (j = 0; j < lag_4; ++j)
 					y_lp4[j] = y[2 * j];
-				celt_pitch_xcorr(x_lp4.get(), y_lp4.get(), xcorr.get(), len_4, max_pitch_4);
+				celt_pitch_xcorr(x_lp4.get(), _y_lp4, _xcorr, len_4, max_pitch_4);
 			}
-			find_best_pitch(xcorr.get(), y_lp4.get(), len_4, max_pitch_4, best_pitch);
+			find_best_pitch(_xcorr, _y_lp4, len_4, max_pitch_4, best_pitch);
 		}
 		for (int i{}; i < max_pitch_2; ++i)
 			xcorr[i] = abs(i - 2 * best_pitch[0]) > 2 && abs(i - 2 * best_pitch[1]) > 2 ? 0 : max(-1.f, celt_inner_prod(x_lp, y + i, len_2));
+		find_best_pitch(_xcorr, y, len_2, max_pitch_2, best_pitch);
 		if (best_pitch[0] > 0 && best_pitch[0] < max_pitch_2 - 1) {
 			float a{ xcorr[best_pitch[0] - 1] },
 				b{ xcorr[best_pitch[0]] },
 				c{ xcorr[best_pitch[0] + 1] };
-			offset = c - a > .7f*(b - a) ? 1 : a - c > .7f*(b - c) ? -1 : 0;
+			offset = c - a > .7f * (b - a) ? 1 : a - c > .7f * (b - c) ? -1 : 0;
 		}
 		else {
 			offset = 0;
 		}
 	}
-	*pitch = 2 * best_pitch[0] - offset;
+	pitch = 2 * best_pitch[0] - offset;
 }
 
 inline static void dual_inner_prod(const float *x, const float *y01, const float *y02, int N, float &xy1, float &xy2) {
@@ -692,22 +695,20 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 		auto yy_lookup = make_unique<float[]>(maxperiod + 1);
 		float xy, xx;
 		dual_inner_prod(x, x, x - T0, N, xx, xy);
-		yy_lookup[0] = xx;
-		float yy{ xx };
+		float yy{ yy_lookup[0] = xx };
 		for (int i = 1; i <= maxperiod; ++i) {
 			const auto x_i = x[-i], x_N_i = x[N - i];
 			yy_lookup[i] = max(0.f, yy += x_i * x_i - x_N_i * x_N_i);
 		}
-		yy = yy_lookup[T0];
 		best_xy = xy;
-		best_yy = yy;
+		best_yy = yy = yy_lookup[T0];
 		g = compute_pitch_gain(xy, xx, yy);
 		float g0{ g };
 		for (k = 2; k <= 15; ++k) {
 			const auto T1 = (2 * T0 + k) / (2 * k);
-			int T1b;
 			if (T1 < minperiod)
 				break;
+			int T1b;
 			T1b = k == 2 ? T1 + T0 > maxperiod ? T0 : T0 + T1 : (2 * second_check[k] * T0 + k) / (2 * k);
 			float xy2;
 			dual_inner_prod(x, x - T1, x - T1b, N, xy, xy2);
@@ -715,13 +716,8 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 			yy = (yy_lookup[T1] + yy_lookup[T1b]) * .5f;
 			auto g1 = compute_pitch_gain(xy, xx, yy);
 			const auto T1_prev_period = abs(T1 - prev_period);
-			float cont{ T1_prev_period <= 1 ? prev_gain : T1_prev_period <= 2 && 5 * k * k < T0 ? prev_gain * .5f : 0 },
-				thresh{ max(.3f, .7f * g0 - cont) };
-			if (T1 < 3 * minperiod)
-				thresh = max(.4f, .85f * g0 - cont);
-			else if (T1 < 2 * minperiod)
-				thresh = max(.5f, .9f * g0 - cont);
-			if (g1 > thresh) {
+			float cont{ T1_prev_period <= 1 ? prev_gain : T1_prev_period <= 2 && 5 * k * k < T0 ? prev_gain * .5f : 0 };
+			if (g1 > (T1 < 3 * minperiod ? max(.4f, .85f * g0 - cont) : T1 < 2 * minperiod ? max(.5f, .9f * g0 - cont) : max(.3f, .7f * g0 - cont))) {
 				best_xy = xy;
 				best_yy = yy;
 				T = T1;
@@ -733,29 +729,26 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 	float pg{ best_yy <= best_xy ? 1.f : best_xy / (best_yy + 1) }, xcorr[3];
 	for (k = 0; k < 3; ++k)
 		xcorr[k] = celt_inner_prod(x, x - (T + k - 1), N);
-	if (pg > g)
-		pg = g;
-	if ((T0_ = 2 * T + xcorr[2] - xcorr[0] > .7f * (xcorr[1] - xcorr[0]) ? 1 : xcorr[0] - xcorr[2] > .7f * (xcorr[1] - xcorr[2]) ? -1 : 0) < minperiod0)
+	if ((T0_ = 2 * T + (xcorr[2] - xcorr[0] > .7f * (xcorr[1] - xcorr[0]) ? 1 : xcorr[0] - xcorr[2] > .7f * (xcorr[1] - xcorr[2]) ? -1 : 0)) < minperiod0)
 		T0_ = minperiod0;
-	return pg;
+	return min(pg, g);
 }
 
 inline static void compute_band_corr(float bandE[NB_BANDS], const kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[FREQ_SIZE]) {
 	memset(bandE, 0, sizeof(float) * NB_BANDS);
-	for (int i{}; i < NB_BANDS; ++i) {
+	for (int i{}; i < NB_BANDS - 1; ++i) {
 		const auto band_size = (eband5ms[i + 1] - eband5ms[i]) << FRAME_SIZE_SHIFT;
 		for (int j{}; j < band_size; ++j) {
 			const auto _j = (eband5ms[i] << FRAME_SIZE_SHIFT) + j;
-			const auto _X = X[_j], _P = P[_j];
+			const auto &_X = X[_j], &_P = P[_j];
 			float frac{ static_cast<float>(j) / band_size },
-				tmp{ _X.real()*_P.real() + _X.imag()*_P.imag() };
+				tmp{ _X.real() * _P.real() + _X.imag() * _P.imag() };
 			bandE[i] += (1 - frac) * tmp;
 			bandE[i + 1] += frac * tmp;
 		}
 	}
 	bandE[0] *= 2;
-	bandE[NB_BANDS - 1] += 2;
-
+	bandE[NB_BANDS - 1] *= 2;
 }
 
 inline static void dct(float out[NB_BANDS], const float in[NB_BANDS]) {
@@ -772,19 +765,18 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 	float Ex[NB_BANDS], float Ep[NB_BANDS], float Exp[NB_BANDS], float features[NB_FEATURES], const float in[FRAME_SIZE])
 {
 	int i;
-	float pitch_buf[PITCH_BUF_SIZE >> 1], *pre[1]{ st->pitch_buf };
+	float pitch_buf[PITCH_BUF_SIZE >> 1], *const pre[1]{ st->pitch_buf };
 	frame_analysis(st->analysis_mem, X, Ex, in);
-	memmove(pre[0], pre[0] + FRAME_SIZE, sizeof(float) * PITCH_BUF_SIZE);
+	memmove(pre[0], pre[0] + FRAME_SIZE, sizeof(float) * (PITCH_BUF_SIZE - FRAME_SIZE));
 	memcpy(pre[0] + PITCH_BUF_SIZE - FRAME_SIZE, in, sizeof(float) * FRAME_SIZE);
 	pitch_downsample(pre, pitch_buf, PITCH_BUF_SIZE, 1);
 	int pitch_index;
-	pitch_search(pitch_buf + (PITCH_MAX_PERIOD >> 1), pitch_buf, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD, &pitch_index);
+	pitch_search(pitch_buf + (PITCH_MAX_PERIOD >> 1), pitch_buf, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD, pitch_index);
 	pitch_index = PITCH_MAX_PERIOD - pitch_index;
-	float gain{ st->last_gain = remove_doubling(pitch_buf, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, PITCH_FRAME_SIZE, pitch_index, st->last_period, st->last_gain) },
-		p[WINDOW_SIZE], tmp[NB_BANDS], logMax{ -2 }, follow{ -2 }, Ly[NB_BANDS], E{};
+	st->last_gain = remove_doubling(pitch_buf, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, PITCH_FRAME_SIZE, pitch_index, st->last_period, st->last_gain);
 	st->last_period = pitch_index;
-	for (i = 0; i < WINDOW_SIZE; ++i)
-		p[i] = st->pitch_buf[PITCH_BUF_SIZE - WINDOW_SIZE - pitch_index + i];
+	float p[WINDOW_SIZE], tmp[NB_BANDS], logMax{ -2 }, follow{ -2 }, Ly[NB_BANDS], E{};
+	memcpy(p, pre[0] + PITCH_BUF_SIZE - WINDOW_SIZE - pitch_index, sizeof(float) * WINDOW_SIZE);
 	apply_window(p);
 	forward_transform(P, p);
 	compute_band_energy(Ep, P);
@@ -792,8 +784,7 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 	for (i = 0; i < NB_BANDS; ++i)
 		Exp[i] /= sqrt(.001f + Ex[i] * Ep[i]);
 	dct(tmp, Exp);
-	for (i = 0; i < NB_DELTA_CEPS; ++i)
-		features[NB_BANDS + 2 * NB_DELTA_CEPS + i] = tmp[i];
+	memcpy(features + NB_BANDS + 2 * NB_DELTA_CEPS, tmp, sizeof(float) * NB_DELTA_CEPS);
 	features[NB_BANDS + 2 * NB_DELTA_CEPS] -= 1.3f;
 	features[NB_BANDS + 2 * NB_DELTA_CEPS + 1] -= .9f;
 	features[NB_BANDS + 3 * NB_DELTA_CEPS] = .01f * (pitch_index - 300);
@@ -887,8 +878,7 @@ inline static float tansig_approx(float x) {
 	const auto i = floor(.5f + 25 * x);
 	x -= .04f * i;
 	const auto y = tansig_table[static_cast<int>(i)];
-	return sign * (y + x * (1 - y * y)*(1 - y * x));
-
+	return sign * (y + x * (1 - y * y) * (1 - y * x));
 }
 
 inline static float sigmoid_approx(float x) {
@@ -900,7 +890,8 @@ inline static float relu(float x) {
 }
 
 static void compute_dense(const DenseLayer *layer, float *output, const float *input) {
-	int i, M{ layer->nb_inputs }, N{ layer->nb_neurons };
+	const auto M = layer->nb_inputs, N = layer->nb_neurons;
+	int i;
 	for (i = 0; i < N; ++i) {
 		float sum{ static_cast<float>(layer->bias[i]) };
 		for (int j = 0; j < M; ++j)
@@ -925,7 +916,8 @@ static void compute_dense(const DenseLayer *layer, float *output, const float *i
 }
 
 static void compute_gru(const GRULayer *gru, float *state, const float *input) {
-	int i, j, M{ gru->nb_inputs }, N{ gru->nb_neurons }, stride{ 3 * N };
+	const auto M = gru->nb_inputs, N = gru->nb_neurons, stride = 3 * N;
+	int i, j;
 	float z[MAX_NEURONS], r[MAX_NEURONS], h[MAX_NEURONS];
 	for (i = 0; i < N; ++i) {
 		float sum{ static_cast<float>(gru->bias[i]) };
@@ -940,7 +932,7 @@ static void compute_gru(const GRULayer *gru, float *state, const float *input) {
 		for (j = 0; j < M; ++j)
 			sum += gru->input_wieghts[N + j * stride + i] * input[j];
 		for (j = 0; j < N; ++j)
-			sum += gru->recurrent_weights[N + j * stride + i] * input[j];
+			sum += gru->recurrent_weights[N + j * stride + i] * state[j];
 		r[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
 	}
 	for (i = 0; i < N; ++i) {
@@ -992,10 +984,8 @@ inline static void pitch_filter(kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[
 	float r[NB_BANDS], rf[FREQ_SIZE], newE[NB_BANDS], norm[NB_BANDS], normf[FREQ_SIZE]{};
 	int i;
 	for (i = 0; i < NB_BANDS; ++i) {
-		const auto _Exp = Exp[i], _g = g[i];
-		auto &_r = r[i];
-		_r = (_Exp > _g) ? 1 : pow(_Exp, 2) * (1 - pow(_g, 2)) / (.001f + pow(_g, 2) * (1 - pow(_Exp, 2)));
-		_r = sqrt(max(0.f, min(_r, 1.f))) * sqrt(Ex[i] / (1e-8f + Ep[i]));
+		const auto _Exp = Exp[i], _Exp2 = _Exp * _Exp, _g = g[i], _g2 = _g * _g;
+		r[i] = sqrt(max(0.f, min((_Exp > _g) ? 1 : _Exp2 * (1 - _g2) / (.001f + _g2 * (1 - _Exp2)), 1.f))) * sqrt(Ex[i] / (1e-8f + Ep[i]));
 	}
 	interp_band_gain(rf, r);
 	for (i = 0; i < FREQ_SIZE; ++i)
@@ -1011,11 +1001,13 @@ inline static void pitch_filter(kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[
 inline static void inverse_transform(float out[WINDOW_SIZE], const kiss_fft_cpx in[FREQ_SIZE]) {
 	kiss_fft_cpx x[WINDOW_SIZE], y[WINDOW_SIZE];
 	int i;
-	for (i = 0; i < FREQ_SIZE; ++i)
-		x[i] = in[i];
+	memcpy(x, in, sizeof(float) * FREQ_SIZE);
 	for (; i < WINDOW_SIZE; ++i)
 		x[i] = conj(x[WINDOW_SIZE - i]);
 	opus_fft_c(common.kfft.get(), x, y);
+	out[0] = WINDOW_SIZE * y->real();
+	for (i = 1; i < WINDOW_SIZE; ++i)
+		out[i] = WINDOW_SIZE * y[WINDOW_SIZE - i].real();
 }
 
 inline static void frame_synthesis(float synthesis_mem[FRAME_SIZE], short out[FRAME_SIZE], const kiss_fft_cpx y[FREQ_SIZE]) {

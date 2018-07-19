@@ -130,6 +130,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\RnNoise\RNNoise.h" />
+    <ClInclude Include="..\RnNoise\rnn_weight.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="RnNoiseClr.h" />
   </ItemGroup>

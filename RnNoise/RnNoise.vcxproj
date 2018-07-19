@@ -119,6 +119,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="RNNoise.h" />
+    <ClInclude Include="rnn_weight.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\README" />

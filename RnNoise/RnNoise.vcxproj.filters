@@ -23,6 +23,9 @@
     <ClInclude Include="RNNoise.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="rnn_weight.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\README" />
