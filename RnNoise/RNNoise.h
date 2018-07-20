@@ -4,7 +4,7 @@
 class RNNoise
 {
 	struct State;
-	std::unique_ptr<State> st;
+	State &st;
 
 public:
 	RNNoise();

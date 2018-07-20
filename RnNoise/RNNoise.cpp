@@ -153,28 +153,33 @@ struct kiss_fft_state {
 	float scale;
 	int shift;
 	int16_t factors[2 * MAXFACTORS];
-	unique_ptr<int16_t[]> bitrev;
-	unique_ptr<kiss_twiddle_cpx[]> twiddles;
+	int16_t *bitrev;
+	kiss_twiddle_cpx *twiddles;
 
 	kiss_fft_state(const int nfft) :
 		nfft{ nfft },
 		scale{ 1.f / nfft },
 		shift{ -1 },
 		factors{},
-		bitrev{ make_unique<int16_t[]>(nfft) },
-		twiddles{ make_unique<kiss_twiddle_cpx[]>(nfft) }
+		bitrev{ new int16_t[nfft] },
+		twiddles{ new kiss_twiddle_cpx[nfft] }
 	{
-		compute_twiddles(twiddles.get(), nfft);
+		compute_twiddles(twiddles, nfft);
 		kf_factor(nfft, factors);
-		compute_bitrev_table(0, bitrev.get(), 1, 1, factors, this);
+		compute_bitrev_table(0, bitrev, 1, 1, factors, this);
+	}
+
+	~kiss_fft_state() {
+		delete[] twiddles;
+		delete[] bitrev;
 	}
 };
 
-static struct CommonState {
-	unique_ptr<const kiss_fft_state> kfft;
+static const struct CommonState {
+	const kiss_fft_state &kfft;
 	float half_window[FRAME_SIZE], dct_table[NB_BANDS * NB_BANDS];
 
-	CommonState() : kfft{ make_unique<const kiss_fft_state>(WINDOW_SIZE) } {
+	CommonState() : kfft{ *new kiss_fft_state{WINDOW_SIZE} } {
 		static const float __2{ sqrt(.5f) }, M_PI_F{ static_cast<float>(M_PI) };
 		int i;
 		for (i = 0; i < FRAME_SIZE; ++i)
@@ -187,6 +192,8 @@ static struct CommonState {
 			}
 		}
 	}
+
+	~CommonState() { delete &kfft; }
 } common{};
 
 static void biquad(float y[FRAME_SIZE], float mem[2], const short x[FRAME_SIZE], const float b[2], const float a[2], const int N) {
@@ -236,7 +243,7 @@ inline static void kf_bfly2(kiss_fft_cpx *Fout, int m, int N) {
 	}
 }
 
-inline static void kf_bfly4(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state *st, int m, int N, int mm) {
+inline static void kf_bfly4(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state &st, int m, int N, int mm) {
 	if (m == 1) {
 		for (int i{}; i < N; ++i, Fout += 4) {
 			kiss_fft_cpx scratch0{ *Fout - Fout[2] };
@@ -252,13 +259,12 @@ inline static void kf_bfly4(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 		}
 	}
 	else {
-		const auto twiddles = st->twiddles.get();
 		const kiss_twiddle_cpx *tw1, *tw2, *tw3;
 		const int m2{ 2 * m }, m3{ 3 * m };
 		kiss_fft_cpx scratch[6], *Fout_beg = Fout;
 		for (int i{}; i < N; ++i) {
 			Fout = Fout_beg + i * mm;
-			tw3 = tw2 = tw1 = twiddles;
+			tw3 = tw2 = tw1 = st.twiddles;
 			for (int j{}; j < m; ++j, ++Fout) {
 				scratch[0] = Fout[m] * *tw1;
 				scratch[1] = Fout[m2] * *tw2;
@@ -282,15 +288,14 @@ inline static void kf_bfly4(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 }
 
 #ifndef RADIS_TWO_ONLY
-inline static void kf_bfly3(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state *st, int m, int N, int mm) {
+inline static void kf_bfly3(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state &st, int m, int N, int mm) {
 	const size_t m2{ 2 * static_cast<size_t>(m) };
-	const auto twiddles = st->twiddles.get();
 	kiss_fft_cpx scratch[5];
 	kiss_fft_cpx *Fout_beg{ Fout };
-	const kiss_twiddle_cpx *tw1, *tw2, epi3{ twiddles[fstride * m] };
+	const kiss_twiddle_cpx *tw1, *tw2, epi3{ st.twiddles[fstride * m] };
 	for (int i{}; i < N; ++i) {
 		Fout = Fout_beg + i * mm;
-		tw2 = tw1 = twiddles;
+		tw2 = tw1 = st.twiddles;
 		auto k = m;
 		do {
 			scratch[1] = Fout[m] * *tw1;
@@ -313,8 +318,8 @@ inline static void kf_bfly3(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 }
 
 #ifndef OVERRIDE_kf_bfly5
-inline static void kf_bfly5(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state *st, int m, int N, int mm) {
-	const auto tw = st->twiddles.get();
+inline static void kf_bfly5(kiss_fft_cpx *Fout, const size_t fstride, const kiss_fft_state &st, int m, int N, int mm) {
+	const auto tw = st.twiddles;
 	kiss_twiddle_cpx *Fout1, *Fout2, *Fout3, *Fout4, *Fout_beg{ Fout }, scratch[13],
 		ya{ tw[fstride * m] }, yb{ tw[fstride * 2 * m] };
 	for (int i{}; i < N; ++i) {
@@ -348,21 +353,21 @@ inline static void kf_bfly5(kiss_fft_cpx *Fout, const size_t fstride, const kiss
 #endif
 #endif
 
-inline static void opus_fft_impl(const kiss_fft_state st[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
+inline static void opus_fft_impl(const kiss_fft_state &st, kiss_fft_cpx fout[WINDOW_SIZE]) {
 	int m2, m, p, L{},
 		fstride[MAXFACTORS],
-		shift{ st->shift > 0 ? st->shift : 0 };
+		shift{ st.shift > 0 ? st.shift : 0 };
 	fstride[0] = 1;
 	do {
-		p = st->factors[2 * L];
-		m = st->factors[2 * L + 1];
+		p = st.factors[2 * L];
+		m = st.factors[2 * L + 1];
 		fstride[L + 1] = fstride[L] * p;
 		++L;
 	} while (m != 1);
-	m = st->factors[2 * L - 1];
+	m = st.factors[2 * L - 1];
 	for (int i{ L - 1 }; i >= 0; --i) {
-		m2 = i ? st->factors[2 * i - 1] : 1;
-		switch (st->factors[2 * i]) {
+		m2 = i ? st.factors[2 * i - 1] : 1;
+		switch (st.factors[2 * i]) {
 		case 2:
 			kf_bfly2(fout, m, fstride[i]);
 			break;
@@ -382,10 +387,10 @@ inline static void opus_fft_impl(const kiss_fft_state st[WINDOW_SIZE], kiss_fft_
 	}
 }
 
-inline static void opus_fft_c(const kiss_fft_state st[WINDOW_SIZE], const kiss_fft_cpx fin[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
-	float scale{ st->scale };
-	for (int i{}; i < st->nfft; ++i)
-		fout[st->bitrev[i]] = scale * fin[i];
+inline static void opus_fft_c(const kiss_fft_state &st, const kiss_fft_cpx fin[WINDOW_SIZE], kiss_fft_cpx fout[WINDOW_SIZE]) {
+	float scale{ st.scale };
+	for (int i{}; i < st.nfft; ++i)
+		fout[st.bitrev[i]] = scale * fin[i];
 	opus_fft_impl(st, fout);
 }
 
@@ -397,8 +402,8 @@ static void forward_transform(kiss_fft_cpx out[FREQ_SIZE], const float in[WINDOW
 		_x.real(in[i]);
 		_x.imag(0);
 	}
-	opus_fft_c(common.kfft.get(), x, y);
-	memcpy(out, y, sizeof(float) * FREQ_SIZE);
+	opus_fft_c(common.kfft, x, y);
+	memcpy(out, y, sizeof(kiss_fft_cpx) * FREQ_SIZE);
 }
 
 static void apply_window(float x[WINDOW_SIZE]) {
@@ -508,16 +513,15 @@ inline static void celt_pitch_xcorr(const float *_x, const float *_y, float *xco
 
 inline static void _celt_autocorr(const float *x, float *ac, const float *window, int overlap, int lag, int n) {
 	const float *xptr;
-	const auto xx = make_unique<float[]>(n);
 	int i;
 	if (overlap) {
-		const auto _xx = xx.get();
-		memcpy(_xx, x, sizeof(float) * n);
+		auto const xx = new float[n];
+		memcpy(xx, x, sizeof(float) * n);
 		for (i = 0; i < overlap; ++i) {
 			xx[i] = x[i] * window[i];
 			xx[n - i - 1] = x[n - i - 1] * window[i];
 		}
-		xptr = _xx;
+		xptr = xx;
 	}
 	else {
 		xptr = x;
@@ -530,6 +534,8 @@ inline static void _celt_autocorr(const float *x, float *ac, const float *window
 			d += xptr[i] * xptr[i - k];
 		ac[k] += d;
 	}
+	if (xptr != x)
+		delete[] xptr;
 }
 
 inline static void _celt_lpc(float *_lpc, const float *ac, int p) {
@@ -634,35 +640,30 @@ inline static void pitch_search(const float *x_lp, float *y, int len, int max_pi
 	int lag{ len + max_pitch },
 		len_4{ len >> 2 }, lag_4{ lag >> 2 }, max_pitch_2{ max_pitch >> 1 }, max_pitch_4{ max_pitch >> 2 }, len_2{ len >> 1 },
 		j, best_pitch[2]{}, offset;
-	{
-		auto xcorr = make_unique<float[]>(max_pitch_2);
-		const auto _xcorr = xcorr.get();
-		{
-			auto y_lp4 = make_unique<float[]>(lag_4);
-			const auto _y_lp4 = y_lp4.get();
-			{
-				auto x_lp4 = make_unique<float[]>(len_4);
-				for (j = 0; j < len_4; ++j)
-					x_lp4[j] = x_lp[2 * j];
-				for (j = 0; j < lag_4; ++j)
-					y_lp4[j] = y[2 * j];
-				celt_pitch_xcorr(x_lp4.get(), _y_lp4, _xcorr, len_4, max_pitch_4);
-			}
-			find_best_pitch(_xcorr, _y_lp4, len_4, max_pitch_4, best_pitch);
-		}
-		for (int i{}; i < max_pitch_2; ++i)
-			xcorr[i] = abs(i - 2 * best_pitch[0]) > 2 && abs(i - 2 * best_pitch[1]) > 2 ? 0 : max(-1.f, celt_inner_prod(x_lp, y + i, len_2));
-		find_best_pitch(_xcorr, y, len_2, max_pitch_2, best_pitch);
-		if (best_pitch[0] > 0 && best_pitch[0] < max_pitch_2 - 1) {
-			float a{ xcorr[best_pitch[0] - 1] },
-				b{ xcorr[best_pitch[0]] },
-				c{ xcorr[best_pitch[0] + 1] };
-			offset = c - a > .7f * (b - a) ? 1 : a - c > .7f * (b - c) ? -1 : 0;
-		}
-		else {
-			offset = 0;
-		}
+	auto const xcorr = new float[max_pitch_2];
+	auto const y_lp4 = new float[lag_4];
+	auto const x_lp4 = new float[len_4];
+	for (j = 0; j < len_4; ++j)
+		x_lp4[j] = x_lp[2 * j];
+	for (j = 0; j < lag_4; ++j)
+		y_lp4[j] = y[2 * j];
+	celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len_4, max_pitch_4);
+	delete[] x_lp4;
+	find_best_pitch(xcorr, y_lp4, len_4, max_pitch_4, best_pitch);
+	delete[] y_lp4;
+	for (int i{}; i < max_pitch_2; ++i)
+		xcorr[i] = abs(i - 2 * best_pitch[0]) > 2 && abs(i - 2 * best_pitch[1]) > 2 ? 0 : max(-1.f, celt_inner_prod(x_lp, y + i, len_2));
+	find_best_pitch(xcorr, y, len_2, max_pitch_2, best_pitch);
+	if (best_pitch[0] > 0 && best_pitch[0] < max_pitch_2 - 1) {
+		float a{ xcorr[best_pitch[0] - 1] },
+			b{ xcorr[best_pitch[0]] },
+			c{ xcorr[best_pitch[0] + 1] };
+		offset = c - a > .7f * (b - a) ? 1 : a - c > .7f * (b - c) ? -1 : 0;
 	}
+	else {
+		offset = 0;
+	}
+	delete[] xcorr;
 	pitch = 2 * best_pitch[0] - offset;
 }
 
@@ -691,40 +692,39 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 		T0_ = maxperiod - 1;
 	int T{ T0_ }, T0{ T }, k;
 	float best_xy, best_yy, g;
-	{
-		auto yy_lookup = make_unique<float[]>(maxperiod + 1);
-		float xy, xx;
-		dual_inner_prod(x, x, x - T0, N, xx, xy);
-		float yy{ yy_lookup[0] = xx };
-		for (int i = 1; i <= maxperiod; ++i) {
-			const auto x_i = x[-i], x_N_i = x[N - i];
-			yy_lookup[i] = max(0.f, yy += x_i * x_i - x_N_i * x_N_i);
-		}
-		best_xy = xy;
-		best_yy = yy = yy_lookup[T0];
-		g = compute_pitch_gain(xy, xx, yy);
-		float g0{ g };
-		for (k = 2; k <= 15; ++k) {
-			const auto T1 = (2 * T0 + k) / (2 * k);
-			if (T1 < minperiod)
-				break;
-			int T1b;
-			T1b = k == 2 ? T1 + T0 > maxperiod ? T0 : T0 + T1 : (2 * second_check[k] * T0 + k) / (2 * k);
-			float xy2;
-			dual_inner_prod(x, x - T1, x - T1b, N, xy, xy2);
-			xy = (xy + xy2) * .5f;
-			yy = (yy_lookup[T1] + yy_lookup[T1b]) * .5f;
-			auto g1 = compute_pitch_gain(xy, xx, yy);
-			const auto T1_prev_period = abs(T1 - prev_period);
-			float cont{ T1_prev_period <= 1 ? prev_gain : T1_prev_period <= 2 && 5 * k * k < T0 ? prev_gain * .5f : 0 };
-			if (g1 > (T1 < 3 * minperiod ? max(.4f, .85f * g0 - cont) : T1 < 2 * minperiod ? max(.5f, .9f * g0 - cont) : max(.3f, .7f * g0 - cont))) {
-				best_xy = xy;
-				best_yy = yy;
-				T = T1;
-				g = g1;
-			}
+	auto const yy_lookup = new float[maxperiod + 1];
+	float xy, xx;
+	dual_inner_prod(x, x, x - T0, N, xx, xy);
+	float yy{ yy_lookup[0] = xx };
+	for (int i = 1; i <= maxperiod; ++i) {
+		const auto x_i = x[-i], x_N_i = x[N - i];
+		yy_lookup[i] = max(0.f, yy += x_i * x_i - x_N_i * x_N_i);
+	}
+	best_xy = xy;
+	best_yy = yy = yy_lookup[T0];
+	g = compute_pitch_gain(xy, xx, yy);
+	float g0{ g };
+	for (k = 2; k <= 15; ++k) {
+		const auto T1 = (2 * T0 + k) / (2 * k);
+		if (T1 < minperiod)
+			break;
+		int T1b;
+		T1b = k == 2 ? T1 + T0 > maxperiod ? T0 : T0 + T1 : (2 * second_check[k] * T0 + k) / (2 * k);
+		float xy2;
+		dual_inner_prod(x, x - T1, x - T1b, N, xy, xy2);
+		xy = (xy + xy2) * .5f;
+		yy = (yy_lookup[T1] + yy_lookup[T1b]) * .5f;
+		auto g1 = compute_pitch_gain(xy, xx, yy);
+		const auto T1_prev_period = abs(T1 - prev_period);
+		float cont{ T1_prev_period <= 1 ? prev_gain : T1_prev_period <= 2 && 5 * k * k < T0 ? prev_gain * .5f : 0 };
+		if (g1 > (T1 < 3 * minperiod ? max(.4f, .85f * g0 - cont) : T1 < 2 * minperiod ? max(.5f, .9f * g0 - cont) : max(.3f, .7f * g0 - cont))) {
+			best_xy = xy;
+			best_yy = yy;
+			T = T1;
+			g = g1;
 		}
 	}
+	delete[] yy_lookup;
 	best_xy = max(0.f, best_xy);
 	float pg{ best_yy <= best_xy ? 1.f : best_xy / (best_yy + 1) }, xcorr[3];
 	for (k = 0; k < 3; ++k)
@@ -761,20 +761,20 @@ inline static void dct(float out[NB_BANDS], const float in[NB_BANDS]) {
 	}
 }
 
-inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_SIZE], kiss_fft_cpx P[WINDOW_SIZE],
+inline static bool compute_frame_features(DenoiseState &st, kiss_fft_cpx X[FREQ_SIZE], kiss_fft_cpx P[WINDOW_SIZE],
 	float Ex[NB_BANDS], float Ep[NB_BANDS], float Exp[NB_BANDS], float features[NB_FEATURES], const float in[FRAME_SIZE])
 {
 	int i;
-	float pitch_buf[PITCH_BUF_SIZE >> 1], *const pre[1]{ st->pitch_buf };
-	frame_analysis(st->analysis_mem, X, Ex, in);
+	float pitch_buf[PITCH_BUF_SIZE >> 1], *const pre[1]{ st.pitch_buf };
+	frame_analysis(st.analysis_mem, X, Ex, in);
 	memmove(pre[0], pre[0] + FRAME_SIZE, sizeof(float) * (PITCH_BUF_SIZE - FRAME_SIZE));
 	memcpy(pre[0] + PITCH_BUF_SIZE - FRAME_SIZE, in, sizeof(float) * FRAME_SIZE);
 	pitch_downsample(pre, pitch_buf, PITCH_BUF_SIZE, 1);
 	int pitch_index;
 	pitch_search(pitch_buf + (PITCH_MAX_PERIOD >> 1), pitch_buf, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD, pitch_index);
 	pitch_index = PITCH_MAX_PERIOD - pitch_index;
-	st->last_gain = remove_doubling(pitch_buf, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, PITCH_FRAME_SIZE, pitch_index, st->last_period, st->last_gain);
-	st->last_period = pitch_index;
+	st.last_gain = remove_doubling(pitch_buf, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, PITCH_FRAME_SIZE, pitch_index, st.last_period, st.last_gain);
+	st.last_period = pitch_index;
 	float p[WINDOW_SIZE], tmp[NB_BANDS], logMax{ -2 }, follow{ -2 }, Ly[NB_BANDS], E{};
 	memcpy(p, pre[0] + PITCH_BUF_SIZE - WINDOW_SIZE - pitch_index, sizeof(float) * WINDOW_SIZE);
 	apply_window(p);
@@ -800,12 +800,12 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 	dct(features, Ly);
 	features[0] -= 12;
 	features[1] -= 4;
-	float *ceps_0{ st->cepstral_mem[st->memid] },
-		*ceps_1{ st->memid < 1 ? st->cepstral_mem[CEPS_MEM + st->memid - 1] : st->cepstral_mem[st->memid - 1] },
-		*ceps_2{ st->memid < 2 ? st->cepstral_mem[CEPS_MEM + st->memid - 2] : st->cepstral_mem[st->memid - 2] },
+	float *ceps_0{ st.cepstral_mem[st.memid] },
+		*ceps_1{ st.memid < 1 ? st.cepstral_mem[CEPS_MEM + st.memid - 1] : st.cepstral_mem[st.memid - 1] },
+		*ceps_2{ st.memid < 2 ? st.cepstral_mem[CEPS_MEM + st.memid - 2] : st.cepstral_mem[st.memid - 2] },
 		spec_variability{};
 	memcpy(ceps_0, features, sizeof(float) * NB_BANDS);
-	st->memid = (st->memid + 1) % CEPS_MEM;
+	st.memid = (st.memid + 1) % CEPS_MEM;
 	for (i = 0; i < NB_DELTA_CEPS; ++i) {
 		features[i] = ceps_0[i] + ceps_1[i] + ceps_2[i];
 		features[NB_BANDS + i] = ceps_0[i] - ceps_2[i];
@@ -816,7 +816,7 @@ inline static bool compute_frame_features(DenoiseState *st, kiss_fft_cpx X[FREQ_
 		for (int j{}; j < CEPS_MEM; ++j) {
 			float dist{};
 			for (int k{}; k < NB_BANDS; ++k)
-				dist += pow(st->cepstral_mem[i][k] - st->cepstral_mem[j][k], 2);
+				dist += pow(st.cepstral_mem[i][k] - st.cepstral_mem[j][k], 2);
 			if (j != i)
 				mindist = min(mindist, dist);
 		}
@@ -1001,10 +1001,11 @@ inline static void pitch_filter(kiss_fft_cpx X[FREQ_SIZE], const kiss_fft_cpx P[
 inline static void inverse_transform(float out[WINDOW_SIZE], const kiss_fft_cpx in[FREQ_SIZE]) {
 	kiss_fft_cpx x[WINDOW_SIZE], y[WINDOW_SIZE];
 	int i;
-	memcpy(x, in, sizeof(float) * FREQ_SIZE);
+	for (i = 0; i < FREQ_SIZE; ++i)
+		x[i] = in[i];
 	for (; i < WINDOW_SIZE; ++i)
 		x[i] = conj(x[WINDOW_SIZE - i]);
-	opus_fft_c(common.kfft.get(), x, y);
+	opus_fft_c(common.kfft, x, y);
 	out[0] = WINDOW_SIZE * y->real();
 	for (i = 1; i < WINDOW_SIZE; ++i)
 		out[i] = WINDOW_SIZE * y[WINDOW_SIZE - i].real();
@@ -1021,9 +1022,9 @@ inline static void frame_synthesis(float synthesis_mem[FRAME_SIZE], short out[FR
 
 struct RNNoise::State : DenoiseState { };
 
-RNNoise::RNNoise() : st{ make_unique<State>() } { }
+RNNoise::RNNoise() : st{ *new State{} } { }
 
-RNNoise::~RNNoise() { }
+RNNoise::~RNNoise() { delete &st; }
 
 float RNNoise::transform(short out[480], const short in[480])
 {
@@ -1036,17 +1037,17 @@ float RNNoise::transform(short out[480], const short in[480])
 		gf[FREQ_SIZE]{ 1 },
 		vad_prob{};
 	static const float a_hp[2]{ -1.99599f, .996f }, b_hp[2]{ -2, 1 };
-	biquad(x, st->mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
-	if (!compute_frame_features(st.get(), X, P, Ex, Ep, Exp, features, x)) {
-		compute_rnn(st->rnn, g, vad_prob, features);
+	biquad(x, st.mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
+	if (!compute_frame_features(st, X, P, Ex, Ep, Exp, features, x)) {
+		compute_rnn(st.rnn, g, vad_prob, features);
 		pitch_filter(X, P, Ex, Ep, Exp, g);
 		int i;
 		for (i = 0; i < NB_BANDS; ++i)
-			st->lastg[i] = g[i] = max(g[i], .6f * st->lastg[i]);
+			st.lastg[i] = g[i] = max(g[i], .6f * st.lastg[i]);
 		interp_band_gain(gf, g);
 		for (i = 0; i < FREQ_SIZE; ++i)
 			X[i] *= gf[i];
 	}
-	frame_synthesis(st->synthesis_mem, out, X);
+	frame_synthesis(st.synthesis_mem, out, X);
 	return vad_prob;
 }
