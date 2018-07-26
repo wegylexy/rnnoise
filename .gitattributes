@@ -62,4 +62,4 @@
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
 
-*.h linguist-language=C++
+rnn_weight.h linguist-vendored
