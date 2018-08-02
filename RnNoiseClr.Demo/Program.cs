@@ -7,6 +7,8 @@ namespace RnNoiseClr.Demo
 {
 	class Program
 	{
+		const float _32767 = 1 / 32767f;
+
 		static void Main(string[] args)
 		{
 			var fi = new FileInfo(args[0]);
@@ -23,6 +25,7 @@ namespace RnNoiseClr.Demo
 				using (var rnn = new RNNoiseCLR())
 				{
 					var samples = new short[RNNoiseCLR.FRAME_SIZE];
+					var _samples = new float[RNNoiseCLR.FRAME_SIZE];
 					int read;
 					while ((read = wfr.Read(acmr.SourceBuffer, 0, size0)) > 0)
 					{
@@ -30,7 +33,11 @@ namespace RnNoiseClr.Demo
 						for (var i = converted; i < size1; ++i)
 							acmr.DestBuffer[i] = 0;
 						Buffer.BlockCopy(acmr.DestBuffer, 0, samples, 0, size1);
-						rnn.Transform(samples, samples);
+						for (var i = 0; i < RNNoiseCLR.FRAME_SIZE; ++i)
+							_samples[i] = samples[i] * _32767;
+						rnn.Transform(_samples, _samples);
+						for (var i = 0; i < RNNoiseCLR.FRAME_SIZE; ++i)
+							samples[i] = (short)(_samples[i] * 32767);
 						Buffer.BlockCopy(samples, 0, acmw.SourceBuffer, 0, converted);
 						wfw.Write(acmw.DestBuffer, 0, acmw.Convert(converted, out _));
 						wfw.Flush();
