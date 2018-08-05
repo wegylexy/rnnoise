@@ -182,8 +182,10 @@ static const struct CommonState {
 	CommonState() : kfft{ *new kiss_fft_state{WINDOW_SIZE} } {
 		static const float __2{ sqrt(.5f) }, M_PI_F{ static_cast<float>(M_PI) };
 		int i;
-		for (i = 0; i < FRAME_SIZE; ++i)
-			half_window[i] = static_cast<float>(sin(M_PI_2 * pow(sin(M_PI_2 * (i + .5) / FRAME_SIZE), 2)));
+		for (i = 0; i < FRAME_SIZE; ++i) {
+			const auto t = sin(M_PI_2 * (i + .5) / FRAME_SIZE);
+			half_window[i] = static_cast<float>(sin(M_PI_2 * t * t));
+		}
 		for (i = 0; i < NB_BANDS; ++i) {
 			for (int j = 0; j < NB_BANDS; ++j) {
 				dct_table[i * NB_BANDS + j] = cos((i + .5f) * j * M_PI_F / NB_BANDS);
@@ -815,8 +817,10 @@ inline static bool compute_frame_features(DenoiseState &st, kiss_fft_cpx X[FREQ_
 		float mindist{ 1e15f };
 		for (int j{}; j < CEPS_MEM; ++j) {
 			float dist{};
-			for (int k{}; k < NB_BANDS; ++k)
-				dist += pow(st.cepstral_mem[i][k] - st.cepstral_mem[j][k], 2);
+			for (int k{}; k < NB_BANDS; ++k) {
+				const auto t = st.cepstral_mem[i][k] - st.cepstral_mem[j][k];
+				dist += t * t;
+			}
 			if (j != i)
 				mindist = min(mindist, dist);
 		}
