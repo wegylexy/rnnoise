@@ -61,6 +61,7 @@ struct DenoiseState {
 	int last_period;
 	float mem_hp_x[2], lastg[NB_BANDS];
 	RNNState rnn;
+	float yy_lookup[(PITCH_MAX_PERIOD >> 1) + 1];
 };
 
 #define kiss_fft_scalar float
@@ -513,38 +514,24 @@ inline static void celt_pitch_xcorr(const float *_x, const float *_y, float *xco
 		xcorr[i] = celt_inner_prod(_x, _y + i, len);
 }
 
-inline static void _celt_autocorr(const float *x, float *ac, const float *window, int overlap, int lag, int n) {
-	const float *xptr;
+inline static void _celt_autocorr(const float *x, float *ac) {
+	static constexpr int n{ PITCH_BUF_SIZE >> 1 };
 	int i;
-	if (overlap) {
-		auto const xx = new float[n];
-		memcpy(xx, x, sizeof(float) * n);
-		for (i = 0; i < overlap; ++i) {
-			xx[i] = x[i] * window[i];
-			xx[n - i - 1] = x[n - i - 1] * window[i];
-		}
-		xptr = xx;
-	}
-	else {
-		xptr = x;
-	}
-	const auto fastN = n - lag;
-	celt_pitch_xcorr(xptr, xptr, ac, fastN, lag + 1);
-	for (int k{}; k <= lag; ++k) {
+	const auto fastN = n - 4;
+	celt_pitch_xcorr(x, x, ac, fastN, 4 + 1);
+	for (int k{}; k <= 4; ++k) {
 		float d{};
 		for (i = k + fastN; i < n; ++i)
-			d += xptr[i] * xptr[i - k];
+			d += x[i] * x[i - k];
 		ac[k] += d;
 	}
-	if (xptr != x)
-		delete[] xptr;
 }
 
-inline static void _celt_lpc(float *_lpc, const float *ac, int p) {
-	memset(_lpc, 0, sizeof(float) * p);
+inline static void _celt_lpc(float *_lpc, const float *ac) {
+	memset(_lpc, 0, sizeof(float) * 4);
 	float error{ ac[0] };
 	if (ac[0]) {
-		for (int i{}; i < p; ++i) {
+		for (int i{}; i < 4; ++i) {
 			float rr{};
 			for (int j{}; j < i; ++j)
 				rr += _lpc[j] * ac[i - j];
@@ -580,22 +567,18 @@ inline static void celt_fir5(const float *x, const float *num, float *y, int N, 
 	mem[4] = mem4;
 }
 
-inline static void pitch_downsample(float *const x[], float *x_lp, int len, int C) {
-	int i, len_2{ len >> 1 };
+inline static void pitch_downsample(float *const x[], float *x_lp) {
+	static constexpr int len_2{ PITCH_BUF_SIZE >> 1 };
+	int i;
 	x_lp[0] = (x[0][1] * .5f + x[0][0])*.5f;
 	for (i = 1; i < len_2; ++i)
 		x_lp[i] = ((x[0][(2 * i - 1)] + x[0][(2 * i + 1)]) * .5f + x[0][2 * i]) * .5f;
-	if (C == 2) {
-		x_lp[0] += (x[1][1] * .5f + x[1][0]) * .5f;
-		for (i = 1; i < len_2; ++i)
-			x_lp[i] = ((x[1][(2 * i - 1)] + x[1][(2 * i + 1)]) * .5f + x[1][2 * i]) * .5f;
-	}
 	float ac[5], lpc[4];
-	_celt_autocorr(x_lp, ac, nullptr, 0, 4, len_2);
+	_celt_autocorr(x_lp, ac);
 	ac[0] *= 1.0001f;
 	for (i = 1; i < 5; ++i)
 		ac[i] -= i * i * 6.4e-5f * ac[i];
-	_celt_lpc(lpc, ac, 4);
+	_celt_lpc(lpc, ac);
 	float tmp{ 1 }, lpc2[5];
 	for (i = 0; i < 4; ++i)
 		lpc[i] *= tmp *= .9f;
@@ -638,34 +621,38 @@ inline static void find_best_pitch(float *xcorr, float *y, int len, int max_pitc
 	}
 }
 
-inline static void pitch_search(const float *x_lp, float *y, int len, int max_pitch, int &pitch) {
-	int lag{ len + max_pitch },
-		len_4{ len >> 2 }, lag_4{ lag >> 2 }, max_pitch_2{ max_pitch >> 1 }, max_pitch_4{ max_pitch >> 2 }, len_2{ len >> 1 },
-		j, best_pitch[2]{}, offset;
-	auto const xcorr = new float[max_pitch_2];
-	auto const y_lp4 = new float[lag_4];
-	auto const x_lp4 = new float[len_4];
-	for (j = 0; j < len_4; ++j)
-		x_lp4[j] = x_lp[2 * j];
-	for (j = 0; j < lag_4; ++j)
-		y_lp4[j] = y[2 * j];
-	celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len_4, max_pitch_4);
-	delete[] x_lp4;
-	find_best_pitch(xcorr, y_lp4, len_4, max_pitch_4, best_pitch);
-	delete[] y_lp4;
-	for (int i{}; i < max_pitch_2; ++i)
-		xcorr[i] = abs(i - 2 * best_pitch[0]) > 2 && abs(i - 2 * best_pitch[1]) > 2 ? 0 : max(-1.f, celt_inner_prod(x_lp, y + i, len_2));
-	find_best_pitch(xcorr, y, len_2, max_pitch_2, best_pitch);
-	if (best_pitch[0] > 0 && best_pitch[0] < max_pitch_2 - 1) {
-		float a{ xcorr[best_pitch[0] - 1] },
-			b{ xcorr[best_pitch[0]] },
-			c{ xcorr[best_pitch[0] + 1] };
-		offset = c - a > .7f * (b - a) ? 1 : a - c > .7f * (b - c) ? -1 : 0;
+inline static void pitch_search(const float *x_lp, float *y, int &pitch) {
+	static constexpr int max_pitch{ PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD };
+	static constexpr int lag{ PITCH_FRAME_SIZE + max_pitch },
+		len_4{ PITCH_FRAME_SIZE >> 2 }, lag_4{ lag >> 2 }, max_pitch_2{ max_pitch >> 1 }, max_pitch_4{ max_pitch >> 2 }, len_2{ PITCH_FRAME_SIZE >> 1 };
+	int j, best_pitch[2]{}, offset;
+	{
+		float xcorr[max_pitch_2];
+		{
+			float y_lp4[lag_4];
+			{
+				float x_lp4[len_4];
+				for (j = 0; j < len_4; ++j)
+					x_lp4[j] = x_lp[2 * j];
+				for (j = 0; j < lag_4; ++j)
+					y_lp4[j] = y[2 * j];
+				celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len_4, max_pitch_4);
+			}
+			find_best_pitch(xcorr, y_lp4, len_4, max_pitch_4, best_pitch);
+		}
+		for (int i{}; i < max_pitch_2; ++i)
+			xcorr[i] = abs(i - 2 * best_pitch[0]) > 2 && abs(i - 2 * best_pitch[1]) > 2 ? 0 : max(-1.f, celt_inner_prod(x_lp, y + i, len_2));
+		find_best_pitch(xcorr, y, len_2, max_pitch_2, best_pitch);
+		if (best_pitch[0] > 0 && best_pitch[0] < max_pitch_2 - 1) {
+			float a{ xcorr[best_pitch[0] - 1] },
+				b{ xcorr[best_pitch[0]] },
+				c{ xcorr[best_pitch[0] + 1] };
+			offset = c - a > .7f * (b - a) ? 1 : a - c > .7f * (b - c) ? -1 : 0;
+		}
+		else {
+			offset = 0;
+		}
 	}
-	else {
-		offset = 0;
-	}
-	delete[] xcorr;
 	pitch = 2 * best_pitch[0] - offset;
 }
 
@@ -682,24 +669,20 @@ inline static float compute_pitch_gain(float xy, float xx, float yy) {
 }
 
 static constexpr int second_check[] = { 0, 0, 3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2 };
-inline static float remove_doubling(float *x, int maxperiod, int minperiod, int N, int &T0_, int prev_period, float prev_gain) {
-	int minperiod0{ minperiod };
-	maxperiod /= 2;
-	minperiod /= 2;
+inline static float remove_doubling(float *x, int &T0_, int prev_period, float prev_gain, float *yy_lookup) {
+	static constexpr int maxperiod_2{ PITCH_MAX_PERIOD >> 1 }, minperiod_2{ PITCH_MIN_PERIOD >> 1 }, N_2{ PITCH_FRAME_SIZE >> 1 };
 	T0_ /= 2;
 	prev_period /= 2;
-	N /= 2;
-	x += maxperiod;
-	if (T0_ >= maxperiod)
-		T0_ = maxperiod - 1;
+	x += maxperiod_2;
+	if (T0_ >= maxperiod_2)
+		T0_ = maxperiod_2 - 1;
 	int T{ T0_ }, T0{ T }, k;
 	float best_xy, best_yy, g;
-	auto const yy_lookup = new float[maxperiod + 1];
 	float xy, xx;
-	dual_inner_prod(x, x, x - T0, N, xx, xy);
+	dual_inner_prod(x, x, x - T0, N_2, xx, xy);
 	float yy{ yy_lookup[0] = xx };
-	for (int i = 1; i <= maxperiod; ++i) {
-		const auto x_i = x[-i], x_N_i = x[N - i];
+	for (int i = 1; i <= maxperiod_2; ++i) {
+		const auto x_i = x[-i], x_N_i = x[N_2 - i];
 		yy_lookup[i] = max(0.f, yy += x_i * x_i - x_N_i * x_N_i);
 	}
 	best_xy = xy;
@@ -708,31 +691,30 @@ inline static float remove_doubling(float *x, int maxperiod, int minperiod, int 
 	float g0{ g };
 	for (k = 2; k <= 15; ++k) {
 		const auto T1 = (2 * T0 + k) / (2 * k);
-		if (T1 < minperiod)
+		if (T1 < minperiod_2)
 			break;
 		int T1b;
-		T1b = k == 2 ? T1 + T0 > maxperiod ? T0 : T0 + T1 : (2 * second_check[k] * T0 + k) / (2 * k);
+		T1b = k == 2 ? T1 + T0 > maxperiod_2 ? T0 : T0 + T1 : (2 * second_check[k] * T0 + k) / (2 * k);
 		float xy2;
-		dual_inner_prod(x, x - T1, x - T1b, N, xy, xy2);
+		dual_inner_prod(x, x - T1, x - T1b, N_2, xy, xy2);
 		xy = (xy + xy2) * .5f;
 		yy = (yy_lookup[T1] + yy_lookup[T1b]) * .5f;
 		auto g1 = compute_pitch_gain(xy, xx, yy);
 		const auto T1_prev_period = abs(T1 - prev_period);
 		float cont{ T1_prev_period <= 1 ? prev_gain : T1_prev_period <= 2 && 5 * k * k < T0 ? prev_gain * .5f : 0 };
-		if (g1 > (T1 < 3 * minperiod ? max(.4f, .85f * g0 - cont) : T1 < 2 * minperiod ? max(.5f, .9f * g0 - cont) : max(.3f, .7f * g0 - cont))) {
+		if (g1 > (T1 < 3 * minperiod_2 ? max(.4f, .85f * g0 - cont) : T1 < 2 * minperiod_2 ? max(.5f, .9f * g0 - cont) : max(.3f, .7f * g0 - cont))) {
 			best_xy = xy;
 			best_yy = yy;
 			T = T1;
 			g = g1;
 		}
 	}
-	delete[] yy_lookup;
 	best_xy = max(0.f, best_xy);
 	float pg{ best_yy <= best_xy ? 1.f : best_xy / (best_yy + 1) }, xcorr[3];
 	for (k = 0; k < 3; ++k)
-		xcorr[k] = celt_inner_prod(x, x - (T + k - 1), N);
-	if ((T0_ = 2 * T + (xcorr[2] - xcorr[0] > .7f * (xcorr[1] - xcorr[0]) ? 1 : xcorr[0] - xcorr[2] > .7f * (xcorr[1] - xcorr[2]) ? -1 : 0)) < minperiod0)
-		T0_ = minperiod0;
+		xcorr[k] = celt_inner_prod(x, x - (T + k - 1), N_2);
+	if ((T0_ = 2 * T + (xcorr[2] - xcorr[0] > .7f * (xcorr[1] - xcorr[0]) ? 1 : xcorr[0] - xcorr[2] > .7f * (xcorr[1] - xcorr[2]) ? -1 : 0)) < PITCH_MIN_PERIOD)
+		T0_ = PITCH_MIN_PERIOD;
 	return min(pg, g);
 }
 
@@ -771,11 +753,11 @@ inline static bool compute_frame_features(DenoiseState &st, kiss_fft_cpx X[FREQ_
 	frame_analysis(st.analysis_mem, X, Ex, in);
 	memmove(pre[0], pre[0] + FRAME_SIZE, sizeof(float) * (PITCH_BUF_SIZE - FRAME_SIZE));
 	memcpy(pre[0] + PITCH_BUF_SIZE - FRAME_SIZE, in, sizeof(float) * FRAME_SIZE);
-	pitch_downsample(pre, pitch_buf, PITCH_BUF_SIZE, 1);
+	pitch_downsample(pre, pitch_buf);
 	int pitch_index;
-	pitch_search(pitch_buf + (PITCH_MAX_PERIOD >> 1), pitch_buf, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD, pitch_index);
+	pitch_search(pitch_buf + (PITCH_MAX_PERIOD >> 1), pitch_buf, pitch_index);
 	pitch_index = PITCH_MAX_PERIOD - pitch_index;
-	st.last_gain = remove_doubling(pitch_buf, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, PITCH_FRAME_SIZE, pitch_index, st.last_period, st.last_gain);
+	st.last_gain = remove_doubling(pitch_buf, pitch_index, st.last_period, st.last_gain, st.yy_lookup);
 	st.last_period = pitch_index;
 	float p[WINDOW_SIZE], tmp[NB_BANDS], logMax{ -2 }, follow{ -2 }, Ly[NB_BANDS], E{};
 	memcpy(p, pre[0] + PITCH_BUF_SIZE - WINDOW_SIZE - pitch_index, sizeof(float) * WINDOW_SIZE);
