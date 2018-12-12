@@ -10,6 +10,7 @@ public:
 	RNNoise();
 	~RNNoise();
 
+	void reset();
+
 	float transform(float out[480], const float in[480]);
 };
-

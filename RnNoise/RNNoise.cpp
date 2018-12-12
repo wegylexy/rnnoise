@@ -1013,6 +1013,8 @@ RNNoise::RNNoise() : st{ *new State{} } { }
 
 RNNoise::~RNNoise() { delete &st; }
 
+void RNNoise::reset() { memset(&st, 0, sizeof(st)); }
+
 float RNNoise::transform(float out[480], const float in[480])
 {
 	kiss_fft_cpx X[FREQ_SIZE], P[WINDOW_SIZE];
