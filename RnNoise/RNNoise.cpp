@@ -66,8 +66,8 @@ struct DenoiseState {
 
 #define kiss_fft_scalar float
 #define kiss_twiddle_scalar float
-typedef std::complex<kiss_fft_scalar> kiss_fft_cpx;
-typedef std::complex<kiss_twiddle_scalar> kiss_twiddle_cpx;
+typedef complex<kiss_fft_scalar> kiss_fft_cpx;
+typedef complex<kiss_twiddle_scalar> kiss_twiddle_cpx;
 
 struct DenseLayer {
 	const rnn_weight *bias, *input_weights;
